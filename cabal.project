@@ -1,0 +1,10 @@
+packages: .
+
+
+source-repository-package
+    type: git
+    location: https://github.com/mpickering/haskell-language-server
+    tag: be4e9e0aa158340ef20bb1c937eb014ab689c61f
+    subdir: ghcide
+
+
