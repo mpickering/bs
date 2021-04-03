@@ -154,6 +154,7 @@ class (Profunctor p) => ProfunctorApp p where
   pap :: (e -> (a, c)) -> ((b, d) -> f) -> p a b -> p c d -> p e f
 
 class Category p where
+  cid :: p a a
   comp :: p b c -> p a b -> p a c
 
 instance Profunctor (Comp p) where
@@ -477,8 +478,10 @@ instance  ProfunctorApp ShakeAct where
 --  CAp :: (e -> (a, c)) -> ((b, d) -> f) -> Comp p a b -> Comp p c d -> Comp p e f
   pap eac bdf (ShakeAct a) (ShakeAct b) = ShakeAct (
                \e -> case eac <$> e of
-                        r -> liftA2 (curry bdf) <$> (a (fst <$> r)) <*> b (snd <$> r))
+                        r -> liftA2Par bdf <$> (a (fst <$> r)) <*> b (snd <$> r))
 --  CComp :: Comp p b c -> Comp p a b -> Comp p a c
+
+liftA2Par f a b = f <$> (S.par a b)
 
 instance Category ShakeAct where
   comp (ShakeAct (ab)) (ShakeAct (cd)) =
@@ -599,6 +602,41 @@ shakeOpen rules = mdo
     let ideState = IdeState{..}
 
     return ideState
+
+
+class ProfunctorSum2 p where
+  branch :: p a (Either b c) -> p a (p b d) -> p a (p c d) -> p a d
+
+instance ProfunctorSum2 (->) where
+  branch c k1 k2 = \a ->
+    let bran = c a
+    in case bran of
+         Left b -> k1 a b
+         Right c -> k2 a c
+
+instance ProfunctorSum2 (K IO) where
+  branch (K c) (K k1) (K k2) = K $ \a -> do
+    brana <- async $ c a
+    k1a <- async $ k1 a
+    k2a <- async $ k2 a
+    bran <- wait brana
+    case bran of
+      Left b -> do
+        cancel k2a
+        (K k1') <- wait k1a
+        k1' b
+      Right c -> do
+        cancel k1a
+        K k2' <- wait k2a
+        k2' c
+
+normalChoice :: (Profunctor p, Category p, ProfunctorSum2 p) => p a b -> p a' b' -> p (Either a a') (Either b b')
+normalChoice l r = branch cid (dimap id (\_ -> dimap id Left l) cid) (dimap id (\_ -> dimap id Right r) cid)
+
+
+
+
+
 
 
 
