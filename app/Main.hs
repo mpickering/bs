@@ -15,6 +15,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE Arrows #-}
+{-# OPTIONS -fplugin=Overloaded -fplugin-opt=Overloaded:Categories -ddump-simpl #-}
 module Main where
 
 import Development.IDE.Core.Service
@@ -66,6 +68,8 @@ import qualified Data.Binary as B
 import Data.Default
 import Control.Concurrent.STM
 import GHC.Exts
+import qualified Overloaded.Categories as O
+import qualified Control.Category as C
 
 data ModNode = ModNode { mn :: String } deriving (Eq, Ord, Show, Generic)
 
@@ -113,7 +117,10 @@ main = do
   putStrLn "G"
 
   let g = interpG fullBuildTreeP
-  putStrLn $ export (defaultStyle mn) g
+  putStrLn $ export (defaultStyle id) g
+
+  let g = interpGA quad
+  putStrLn $ export (defaultStyle id) g
 
 
   putStrLn "R"
@@ -139,6 +146,7 @@ main = do
 data Comp p a b where
   CUnit :: Comp p () ()
   CEff :: p a b -> Comp p a b
+  CId :: Comp p a a
   CMap :: (c -> a) -> (b -> d) -> Comp p a b -> Comp p c d
   CAp :: (e -> (a, c)) -> ((b, d) -> f) -> Comp p a b -> Comp p c d -> Comp p e f
   CComp :: Comp p b c -> Comp p a b -> Comp p a c
@@ -165,6 +173,7 @@ instance ProfunctorApp (Comp p) where
   pap = CAp
 
 instance Category (Comp p) where
+  cid = CId
   comp = CComp
 
 injP :: p a b -> Comp p a b
@@ -172,6 +181,7 @@ injP fa = CEff fa
 
 interpP :: (Category p, ProfunctorApp p) => (forall a b . q a b -> p a b) -> Comp q a b -> p a b
 interpP f CUnit = cunit
+interpP f CId = cid
 interpP f (CEff ef) = f ef
 interpP f (CMap to from pab) = dimap to from (interpP f pab)
 interpP f (CAp to from pab pcd) = pap to from (interpP f pab) (interpP f pcd)
@@ -437,13 +447,13 @@ instance MonadHold t m => MonadHold t (StateT s m) where
 
 -- Forgetful embedding to untyped graphs
 
-newtype GP a b = GP { runGP :: (Graph ModNode) }
+newtype GP a b = GP { runGP :: (Graph String) }
 
-interpG :: BuildTreeP a b -> Graph ModNode
+interpG :: BuildTreeP a b -> Graph String
 interpG = runGP . interpP go
   where
     go :: PAction inp out -> GP inp out
-    go (CompileModP mn) = GP (Vertex mn)
+    go (CompileModP mn) = GP (Vertex (show mn))
 
 instance Profunctor GP where
   dimap f g h = coerce h
@@ -455,6 +465,7 @@ instance  ProfunctorApp GP where
 --  CComp :: Comp p b c -> Comp p a b -> Comp p a c
 
 instance Category GP where
+  cid = GP Empty
   comp (GP ab) (GP cd) =
     GP (Connect cd ab)
 
@@ -634,8 +645,50 @@ normalChoice :: (Profunctor p, Category p, ProfunctorSum2 p) => p a b -> p a' b'
 normalChoice l r = branch cid (dimap id (\_ -> dimap id Left l) cid) (dimap id (\_ -> dimap id Right r) cid)
 
 
+data Alg a b where
+  Mult, Plus :: Alg (Double, Double) Double
+
+instance Show (Alg a b) where
+  show Mult = "M"
+  show Plus = "P"
+
+interpGA :: Comp Alg a b -> Graph String
+interpGA = runGP . interpP go
+  where
+    go :: Alg inp out -> GP inp out
+    go mn = GP (Vertex (show mn))
+
+quad :: Comp Alg (Double, Double) Double
+quad = proc (x, y) -> do
+    x2 <- mult -< (x, x)
+    y2 <- mult -< (y, y)
+    plus -< (x2, y2)
+
+mult = CEff Mult
+plus = CEff Plus
 
 
+instance C.Category (Comp p) where
+    id = CId
+    (.) = CComp
+
+instance O.CategoryWith1 (Comp p) where
+    type Terminal (Comp p)  = ()
+
+    terminal = dimap (const ()) id CUnit
+
+instance O.CartesianCategory (Comp p)  where
+    type Product (Comp p) = (,)
+
+    proj1 = dimap id fst CId
+    proj2 = dimap id snd CId
+
+    fanout f g = CAp (\a -> (a, a)) id f g
+
+instance O.GeneralizedElement (Comp p) where
+    type Object (Comp p) a = a
+
+    konst a = dimap (const ()) (const a) CUnit
 
 
 

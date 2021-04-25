@@ -52,5 +52,6 @@ executable bs
             , unordered-containers
             , data-default
             , stm
+            , overloaded
     hs-source-dirs:   app
     default-language: Haskell2010
